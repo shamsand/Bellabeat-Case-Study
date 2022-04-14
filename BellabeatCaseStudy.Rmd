@@ -1,0 +1,274 @@
+---
+title: "Bellabeat Case Study"
+author: "Shannon Sanders"
+date: '2022-04-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### **Background:**
+
+Bellabeat is a high-tech company that manufactures health-focused smart products. Collecting data on activity, sleep, stress, and reproductive health has allowed Bellabeat to empower women with knowledge about their own health and habits. Since it was founded in 2013, Bellabeat has grown rapidly and quickly positioned itself as a tech-driven wellness company for women.
+
+#### **Business Objective:**
+
+Analyze FitBit smart device usage data in order to gain insight into how consumers use non-Bellabeat smart devices. Apply that knowledge to one Bellabeat product to influence marketing strategy.
+
+#### **Data & Tools Used:**
+
+This dataset was derived from FitBit Fitness Tracker Data, which is a public dataset on Kaggle. The data consists of minute-level output for daily physical activity, heart rate, and sleep monitoring. It includes many tables in both long and wide format of different aspects of device usage and user behavior.
+
+R was chosen for this case study because it can clean, transform, analyze, and visualize data all in one place. The dataset is also relatively small, making it is a better choice than SQL/Tableau.
+
+## **Preparing Data**
+
+#### **Load the packages**
+
+```{r message=TRUE, warning=TRUE, paged.print=TRUE}
+library(readr)
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+
+```
+
+#### **Import the datasets**
+
+```{r message=TRUE, warning=TRUE, paged.print=TRUE}
+daily <- read_csv("dailyActivity.csv")
+calories <- read_csv("dailyCalories.csv")
+intensities <- read_csv("dailyIntensities.csv")
+steps <- read_csv("dailySteps.csv")
+hr <- read_csv("heartrateSeconds.csv")
+sleep <- read_csv("sleepDay.csv")
+weight <- read_csv("weightLogInfo.csv")
+hourlyInt <- read_csv("hourlyIntensities.csv")
+```
+
+#### **Read the data**
+
+```{r message=TRUE, warning=TRUE, paged.print=TRUE}
+head(daily)
+head(calories)
+head(intensities)
+head(steps)
+head(hr)
+head(sleep)
+head(weight)
+head(hourlyInt)
+```
+
+Upon inspecting the data, I notice that each one has a column named "Id" which will help if I decide to merge data. There also seems to be a lot of data missing from the weight table. This makes me curious to see how many users are using all of the features. Then I will make sure all of the dates are formatted correctly.
+
+**Look for missing values**
+
+```{r message=TRUE, warning=TRUE, paged.print=TRUE}
+sum(is.na(daily))
+sum(is.na(calories))
+sum(is.na(intensities))
+sum(is.na(steps))
+sum(is.na(hr))
+sum(is.na(sleep))
+sum(is.na(weight))
+sum(is.na(hourlyInt))
+```
+
+If the value is 0 there are no missing values. The weight df has 65 missing values, the rest of them aren't missing any at all.
+
+#### **Counting participants**
+
+```{r}
+n_distinct(daily$Id)
+n_distinct(calories$Id)
+n_distinct(intensities$Id)
+n_distinct(steps$Id)
+n_distinct(hr$Id)
+n_distinct(sleep$Id)
+n_distinct(weight$Id)
+n_distinct(hourlyInt$Id)
+```
+
+There are 33 distinct users in the majority of the tables, 14 in heartrate, 24 in sleep, and 8 in weight. I will omit heartrate and weight because it doesn't seem those features are used as much.
+
+#### **Formatting dates**
+
+```{r}
+daily$ActivityDate=as.POSIXct(daily$ActivityDate, format="%m/%d/%Y", tz=Sys.timezone())
+daily$date <- format(daily$ActivityDate, format = "%m/%d/%y")
+
+sleep$SleepDay=as.POSIXct(sleep$SleepDay, format="%m/%d/%Y %I:%M:%S %p", tz=Sys.timezone())
+sleep$date <- format(sleep$SleepDay, format = "%m/%d/%y")
+
+dhourlyInt <- hourlyInt %>% 
+  extract(ActivityHour, c("Date", "Hour"), "([^ ]+) (.*)")
+```
+
+I changed the dates from strings to date formats. I also separated the day and hour on the hourly tables.
+
+## **Exploratory Analysis**
+
+#### Looking at summaries
+
+```{r}
+summary(daily)
+summary(calories)
+summary(intensities)
+summary(steps)
+summary(sleep)
+summary(hourlyInt)
+```
+
+I can see a lot of information from the summaries.
+
+-   The timeframe is 1 month, from 4/12/16 to 5/12/16
+
+-   Users slept an average of 7 hours a night
+
+-   They burned an average of 2000 calories per day
+
+-   The average steps taken per day is 7638
+
+-   The max record of sedentary minutes is 1440
+
+#### Calculating unused device days
+
+Lets first see how many days the 33 participants did not use their device. To do this, I will count the days where SedentaryMinutes = 1440, since 1440 is the total number of minutes in a day. It is highly unlikely that participants did not move at all for a whole day. It makes more sense that the fitbit was not used during those days.
+
+```{r}
+deviceUnused <- daily %>%
+  filter(SedentaryMinutes == 1440) %>% 
+  group_by(Id) %>% 
+  summarise(countOfUnusedDays = n()) %>% 
+  print()
+```
+
+Out of all 33 participants, 17 of them did not use the device for 1 or more days of the month. This can potentially skew the data, making it look like there are more sedentary days than there really are. Lets calculate the percentage of days fitbits weren't used and then create some visualizations.
+
+```{r}
+daily %>% 
+  group_by(ActivityDate) %>% 
+  summarise(count = n())%>% 
+  print() 
+
+percentDaysUnused <- daily %>% 
+  filter(SedentaryMinutes == 1440) %>% 
+  group_by(Id) %>% 
+  summarise(unusedDays = n(), percentUnused = (unusedDays/31)*100)
+
+head(percentDaysUnused)
+```
+
+It looks like two users went almost half the month without using their fitbit. Some missed at least a day, but the majority used it every day.
+
+## Visualization
+
+#### Percent of fitbit usage
+
+Now lets make a pie chart to show total fitbit usage from all users, showing how many missed 1 day of use, missed up to a week of use, missed more than a week of use, and how many did not miss any days.
+
+```{r}
+piechart <- percentDaysUnused %>% 
+  group_by(unusedDays) %>% 
+  summarise(totalParticipants = n())
+head(piechart)
+
+slices <- c(54, 24, 12, 10)
+lbls <- c("Used everyday", "Unused for 1 day", "Unused 2 to 7 days", "Unused > 7 days")
+pct <- round(slices/sum(slices)*100)
+lbls <- paste(lbls, pct)
+lbls <- paste(lbls,"%",sep="")
+pie(slices,labels = lbls, col=rainbow(length(lbls)),
+   main="Percents of Fitbit Usage")
+
+```
+
+A little less than half of the users do not wear their fitbit every day. **We could use the app to remind users to wear their device daily for the most health benefit.**
+
+#### Activity Level
+
+Now lets make a new table to filter out the unused days and group users by activity level and look at that with a bar chart.
+
+```{r}
+participantActivity <- daily %>% 
+  filter(SedentaryMinutes != 1440) %>% 
+  group_by(Id) %>% 
+  summarize(total_very_active_mins = sum(VeryActiveMinutes),
+            total_fairly_active_mins = sum(FairlyActiveMinutes),
+            total_lightly_active_mins = sum(LightlyActiveMinutes),
+            total_sendentary_mins = sum(SedentaryMinutes),
+            total_mins = sum(VeryActiveMinutes, FairlyActiveMinutes, LightlyActiveMinutes, SedentaryMinutes),
+            percent_very_active = (total_very_active_mins/total_mins)*100,
+            percent_fairly_active = (total_fairly_active_mins/total_mins)*100,
+            percent_lightly_active = (total_lightly_active_mins/total_mins)*100,
+            percent_sendentary_active = (total_sendentary_mins/total_mins)*100)
+head(participantActivity)
+
+participantActivity <- participantActivity %>% 
+  mutate(intensity =
+           case_when(percent_very_active > mean(percent_very_active) ~ "Very Active",
+                     percent_fairly_active > mean(percent_fairly_active) ~ "Fairly Active",
+                     percent_lightly_active > mean(percent_lightly_active) ~ "Lightly Active",
+                     percent_sendentary_active > mean(percent_sendentary_active) ~ "Sendentary"))
+
+newActivity <- participantActivity %>% 
+  group_by(intensity) %>% 
+  summarise(count = n())
+
+ggplot(newActivity, aes(x = intensity, y = count, fill = intensity)) +
+    geom_histogram(stat = "identity") +
+  ylab("Number of Participants") +
+  xlab("Intensity Type") +
+  labs(title = "Number of Participants by Intensity") +
+  theme(legend.position = "none")
+
+```
+
+So with the unused days filtered out, this is how active the users are. A good portion of them are very active, but there are still many sedentary users. **We can focus more on sedentary users by sending them daily notifications to be more active by going on a run or walk, etc.** Lets see if there's a good time of day to send out that notification.
+
+#### Hourly intensities
+
+```{r}
+newHourlyInt <- dhourlyInt %>% 
+  group_by(Hour) %>% 
+  drop_na() %>% 
+  summarise(mean_total_int = mean(TotalIntensity))
+
+head(newHourlyInt)
+
+ggplot(data=newHourlyInt, aes(x= Hour, y=mean_total_int))+
+  geom_histogram(stat = "identity", fill = "darkblue") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Average Total Intensity vs. Time")
+```
+
+Looks like people are most active between 5pm and 7pm. **This would be a good time to send out that notification** to remind and motivate the sedentary users (or all users) to be more active.
+
+#### Looking at sleep
+
+```{r}
+merged_data <- merge(sleep, daily, by=c('Id', 'date')) %>% 
+  filter(SedentaryMinutes !=1440)
+
+ggplot(data=merged_data, aes(x=TotalMinutesAsleep, y=SedentaryMinutes)) + 
+geom_point(color='darkblue') + geom_smooth() +
+  labs(title="Minutes Asleep vs. Sedentary Minutes")
+```
+
+This is a negative correlation between sedentary minutes and total minutes asleep. This means that as sedentary minutes increase, minutes asleep decreases. If users want to improve their sleep, they can decrease their sedentary minutes. **Thus, sending that notification to run or walk between the hours of 5pm to 7pm will increase activity, reduce sedentary minutes, and increase minutes asleep.**
+
+## Conclusion
+
+The Bellabeat Time device is similar to the FitBit watches, and the apps are also comparable. The following marketing strategies can be used to increase usage of both devices.
+
+1.  The average steps per day are 7638, yet CDC research shows that 8000 steps or more is associated with a lower risk for mortality. The Bellabeat app can explain this health benefit. It could also send out notifications by app and/or Time device to remind users to be more active by walking or running each day.
+
+2.  Since most activity happens between 5pm and 7pm, Bellabeat should consider this a good time to send out those reminders, specifically to the more sedentary users to keep them on track.
+
+3.  A decrease in active minutes leads to a decrease in sleep, so Bellabeat can also explain the health benefits of getting at least 8 hours of sleep in the app, and how activity levels affect quality of sleep. If users want to improve their sleep, Bellabeat should send out notifications by app and/or Time device to remind users to be more active by walking or running each day.
+
+4.  Lastly, wearing the device every day is important to track each users health. Bellabeat should consider sending out notifications via app to remind users to wear their device every day for the most benefit. A good time to do this could be when the heart rate is at 0 for a specified amount of time.
